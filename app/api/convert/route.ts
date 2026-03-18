@@ -44,12 +44,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
     }
 
-    // Wrap URL in quotes safely (simple prevention of basic injections, but yt-dlp expects valid YouTube URLs)
+    // Wrap URL in quotes safely
     const safeUrl = url.replace(/"/g, '\\"');
+
+    // To bypass YouTube Bot Protection on Render we force non-web clients
+    const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --no-check-certificates`;
 
     // 1. Check Duration (max 15 minutes)
     try {
-      const { stdout: durationOut } = await execAsync(`yt-dlp --get-duration "${safeUrl}"`);
+      const { stdout: durationOut } = await execAsync(`yt-dlp ${bypassArgs} --get-duration "${safeUrl}"`);
       const durationSec = parseDuration(durationOut);
       if (durationSec > 15 * 60) {
         return NextResponse.json({ error: "Video exceeds 15 minutes limit" }, { status: 400 });
@@ -58,22 +61,20 @@ export async function POST(req: Request) {
       console.error("Duration fetch error:", err);
       const errMsg = err?.message || "";
       if (errMsg.includes("not recognized") || errMsg.includes("not found")) {
-        return NextResponse.json({ error: "System Error: yt-dlp is not installed or not in PATH. Please install yt-dlp and ffmpeg first." }, { status: 500 });
+        return NextResponse.json({ error: "System Error: yt-dlp is not installed. Please redeploy using the Dockerfile." }, { status: 500 });
       }
-      return NextResponse.json({ error: "Could not fetch video duration or invalid video." }, { status: 400 });
+      return NextResponse.json({ error: "YouTube blocked the server (Bot Protection) or video is invalid." }, { status: 400 });
     }
 
     // 2. Setup tmp dir
-    // We use os.tmpdir() to be exactly mapped correctly on Windows/macOS/Vercel (which defaults to /tmp)
     const tmpDir = os.tmpdir();
     const outputTemplate = path.join(tmpDir, "%(title)s.%(ext)s");
 
     // 3. Execute yt-dlp command
-    const cmd = `yt-dlp -x --audio-format mp3 --audio-quality 0 --output "${outputTemplate.replace(/\\/g, "/")}" --print-json --no-playlist "${safeUrl}"`;
+    const cmd = `yt-dlp ${bypassArgs} -x --audio-format mp3 --audio-quality 0 --output "${outputTemplate.replace(/\\/g, "/")}" --print-json --no-playlist "${safeUrl}"`;
 
     let stdoutJSON = "";
     try {
-      // 5 minutes timeout = 300000ms
       const { stdout } = await execAsync(cmd, { timeout: 300000, maxBuffer: 1024 * 1024 * 10 });
       stdoutJSON = stdout;
     } catch (err: any) {
@@ -119,7 +120,6 @@ export async function POST(req: Request) {
     // 5. Cleanup
     try {
       fs.unlinkSync(finalMp3Path);
-      // Also attempt to delete the original non-audio file if it was left behind, usually it isn't with -x
     } catch (e) {
       console.error("Cleanup error:", e);
     }
