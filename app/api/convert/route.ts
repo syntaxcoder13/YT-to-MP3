@@ -1,22 +1,7 @@
 import { NextResponse } from "next/server";
-import { exec } from "child_process";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import util from "util";
 
-const execAsync = util.promisify(exec);
-
-function parseDuration(durationStr: string): number {
-  const parts = durationStr.trim().split(":").map(Number);
-  if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2]; // HH:MM:SS
-  }
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1]; // MM:SS
-  }
-  return parts[0] || 0; // SS
-}
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || "youtube-mp36.p.rapidapi.com";
 
 function formatBytes(bytes: number, decimals = 2) {
   if (bytes === 0) return "0 Bytes";
@@ -27,7 +12,7 @@ function formatBytes(bytes: number, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-export const maxDuration = 300; // Next.js 14 API Route timeout
+export const maxDuration = 300; 
 
 export async function POST(req: Request) {
   try {
@@ -38,97 +23,72 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    // Validate URL
-    const isValid = /^(https?\:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$/.test(url);
-    if (!isValid) {
-      return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
+    // Extract Video ID
+    const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    const videoId = videoIdMatch?.[1];
+
+    if (!videoId) {
+      return NextResponse.json({ error: "Could not extract Video ID from URL." }, { status: 400 });
     }
 
-    // Wrap URL in quotes safely
-    const safeUrl = url.replace(/"/g, '\\"');
-
-    // To bypass YouTube Bot Protection on Render we force non-web clients
-    const bypassArgs = `--extractor-args "youtube:player_client=android,ios" --no-check-certificates`;
-
-    // 1. Check Duration (max 15 minutes)
-    try {
-      const { stdout: durationOut } = await execAsync(`yt-dlp ${bypassArgs} --get-duration "${safeUrl}"`);
-      const durationSec = parseDuration(durationOut);
-      if (durationSec > 15 * 60) {
-        return NextResponse.json({ error: "Video exceeds 15 minutes limit" }, { status: 400 });
-      }
-    } catch (err: any) {
-      console.error("Duration fetch error:", err);
-      const errMsg = err?.message || "";
-      if (errMsg.includes("not recognized") || errMsg.includes("not found")) {
-        return NextResponse.json({ error: "System Error: yt-dlp is not installed. Please redeploy using the Dockerfile." }, { status: 500 });
-      }
-      return NextResponse.json({ error: "YouTube blocked the server (Bot Protection) or video is invalid." }, { status: 400 });
+    if (!RAPIDAPI_KEY) {
+      return NextResponse.json({ error: "RapidAPI Key is missing. Please set RAPIDAPI_KEY in your env." }, { status: 500 });
     }
 
-    // 2. Setup tmp dir
-    const tmpDir = os.tmpdir();
-    const outputTemplate = path.join(tmpDir, "%(title)s.%(ext)s");
-
-    // 3. Execute yt-dlp command
-    const cmd = `yt-dlp ${bypassArgs} -x --audio-format mp3 --audio-quality 0 --output "${outputTemplate.replace(/\\/g, "/")}" --print-json --no-playlist "${safeUrl}"`;
-
-    let stdoutJSON = "";
-    try {
-      const { stdout } = await execAsync(cmd, { timeout: 300000, maxBuffer: 1024 * 1024 * 10 });
-      stdoutJSON = stdout;
-    } catch (err: any) {
-      console.error("Download error:", err);
-      return NextResponse.json({ error: "Failed to download and convert video." }, { status: 500 });
-    }
-
-    let videoInfo;
-    try {
-      // Parse the last line of stdout which contains the JSON (in case yt-dlp prints warnings before)
-      const lines = stdoutJSON.trim().split("\n");
-      const jsonLine = lines[lines.length - 1];
-      videoInfo = JSON.parse(jsonLine);
-    } catch (e) {
-      console.error("JSON parse error:", e);
-      return NextResponse.json({ error: "Failed to parse video info." }, { status: 500 });
-    }
-
-    const title = videoInfo.title || "audio";
-    const thumbnail = videoInfo.thumbnail || "";
-    const downloadedFilePath = videoInfo._filename;
-
-    if (!downloadedFilePath) {
-      return NextResponse.json({ error: "Could not locate downloaded file path." }, { status: 500 });
-    }
-
-    // The downloaded file might have .webm or .m4a in _filename, but --audio-format mp3 
-    // forces it to rewrite as .mp3. So we change the extension of _filename to .mp3.
-    const fileBase = downloadedFilePath.substring(0, downloadedFilePath.lastIndexOf("."));
-    const finalMp3Path = `${fileBase}.mp3`;
-
-    if (!fs.existsSync(finalMp3Path)) {
-      return NextResponse.json({ error: "MP3 file not found after conversion." }, { status: 500 });
-    }
-
-    // 4. Read MP3 and convert to base64
-    const fileBuffer = fs.readFileSync(finalMp3Path);
-    const audioData = fileBuffer.toString("base64");
+    // 1. Initiate Download Request via RapidAPI
+    // Let's use youtube-mp36 as it's the most common
+    const apiUrl = `https://${RAPIDAPI_HOST}/dl?id=${videoId}`;
     
-    const stats = fs.statSync(finalMp3Path);
-    const fileSizeHuman = formatBytes(stats.size);
-
-    // 5. Cleanup
+    let result;
     try {
-      fs.unlinkSync(finalMp3Path);
-    } catch (e) {
-      console.error("Cleanup error:", e);
+      const apiRes = await fetch(apiUrl, {
+        method: "GET",
+        headers: {
+          "X-RapidAPI-Key": RAPIDAPI_KEY,
+          "X-RapidAPI-Host": RAPIDAPI_HOST,
+        },
+      });
+
+      result = await apiRes.json();
+    } catch (err: any) {
+      console.error("RapidAPI fetch error:", err);
+      return NextResponse.json({ error: "Failed to connect to RapidAPI." }, { status: 500 });
     }
 
-    // 6. Return response
+    if (result.status === "fail") {
+      return NextResponse.json({ error: result.msg || "API request failed." }, { status: 400 });
+    }
+
+    // Status could be "processing" or "ok"
+    // Usually youtube-mp36 is fast, but just in case we error if not ok
+    if (result.status !== "ok") {
+       return NextResponse.json({ error: result.msg || "The video is being processed. Try again in a few seconds." }, { status: 400 });
+    }
+
+    const { link, title, filesize } = result;
+
+    if (!link) {
+      return NextResponse.json({ error: "Download link not found in API response." }, { status: 500 });
+    }
+
+    const thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+
+    // 2. Fetch the audio file from the provided link to convert to base64
+    // This maintains compatibility with the existing frontend
+    let audioData = "";
+    try {
+      const audioRes = await fetch(link);
+      const audioBuffer = await audioRes.arrayBuffer();
+      audioData = Buffer.from(audioBuffer).toString("base64");
+    } catch (err: any) {
+      console.error("Audio download error:", err);
+      return NextResponse.json({ error: "Failed to fetch conversion from RapidAPI link." }, { status: 500 });
+    }
+
     return NextResponse.json({
-      title,
+      title: title || "Downloaded Audio",
       thumbnail,
-      fileSize: fileSizeHuman,
+      fileSize: formatBytes(filesize || 0),
       audioData
     });
 

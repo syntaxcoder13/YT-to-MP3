@@ -1,26 +1,17 @@
 # YT to MP3 Converter
 
-A fast and beautiful YouTube to MP3 converter web application built with Next.js 14, Tailwind CSS, yt-dlp, and ffmpeg.
+A fast and beautiful YouTube to MP3 converter web application built with Next.js 14, Tailwind CSS, and RapidAPI.
 
-## Prerequisites (System mein install karna hoga)
+## Prerequisites (RapidAPI Setup)
 
-Before running the application, make sure you have the required audio processing binaries installed on your system.
+Before running the application, make sure you have your RapidAPI credentials ready.
 
-### macOS
+1.  Subscribe to [YouTube to MP3 API](https://rapidapi.com/n0p97u/api/youtube-mp36) on RapidAPI Hub.
+2.  Create a `.env.local` file in the root directory.
+3.  Add your API key and host:
 ```bash
-brew install yt-dlp ffmpeg
-```
-
-### Ubuntu/Debian
-```bash
-sudo apt install ffmpeg
-pip install yt-dlp
-```
-
-### Windows
-```bash
-winget install yt-dlp
-winget install ffmpeg
+RAPIDAPI_KEY=your_key_here
+RAPIDAPI_HOST=youtube-mp36.p.rapidapi.com
 ```
 
 ## Running the Application
@@ -44,6 +35,5 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - Modern animated Loading and Converting states
 - Full success view with video thumbnail, title, rounded file size, and primary download button
 - Proper error handling with descriptive states
-- Backend running `yt-dlp` using Node's `child_process.exec` securely and passing it as a Base64 encoded payload to the frontend.
-- Strict 5-minutes API timeout and 15-minutes maximum video length check to prevent massive downloads.
-- Vercel `/tmp` compatible export path for MP3s.
+- Backend running RapidAPI conversion for high reliability and speed.
+- Small footprint with no local binary dependencies.

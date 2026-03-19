@@ -9,11 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "clsx": "^2.1.0",
     "lucide-react": "^0.368.0",
     "next": "^16.1.7",
-    "play-dl": "^1.9.14",
     "react": "^18",
     "react-dom": "^18",
     "tailwind-merge": "^2.2.2"
